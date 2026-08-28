@@ -1,27 +1,94 @@
 import re
-from typing import Dict, List
 
 from labelguard.models import ExtractedField
 
 
-WARNING_PHRASE = (
-    "GOVERNMENT WARNING:"
-)
-
-
-def _find_match(
-    pattern: str,
-    text: str,
-    flags: int = re.IGNORECASE,
-) -> str:
-    """
-    Return the first regex capture group found in text.
-    """
-
+def extract_abv(text: str) -> str:
     match = re.search(
-        pattern,
+        r"(\d+(?:\.\d+)?)\s*%",
         text,
-        flags,
+        flags=re.IGNORECASE,
+    )
+
+    if not match:
+        return ""
+
+    return match.group(1)
+
+
+def extract_net_contents(text: str) -> str:
+    match = re.search(
+        r"\b(\d+(?:\.\d+)?)\s*(mL|ML|L|LITERS?|LITRES?)\b",
+        text,
+        flags=re.IGNORECASE,
+    )
+
+    if not match:
+        return ""
+
+    value = match.group(1)
+    unit = match.group(2)
+
+    if unit.lower() == "ml":
+        unit = "mL"
+    else:
+        unit = "L"
+
+    return f"{value} {unit}"
+
+
+def extract_class_type(text: str) -> str:
+    patterns = [
+        r"\b(KENTUCKY\s+STRAIGHT\s+BOURBON\s+WHISKEY)\b",
+        r"\b(STRAIGHT\s+BOURBON\s+WHISKEY)\b",
+        r"\b(BOURBON\s+WHISKEY)\b",
+        r"\b(RYE\s+WHISKEY)\b",
+        r"\b(VODKA)\b",
+        r"\b(GIN)\b",
+        r"\b(RUM)\b",
+        r"\b(TEQUILA)\b",
+        r"\b(BRANDY)\b",
+    ]
+
+    for pattern in patterns:
+        match = re.search(
+            pattern,
+            text,
+            flags=re.IGNORECASE,
+        )
+
+        if match:
+            return " ".join(
+                match.group(1).split()
+            ).title()
+
+    return ""
+
+
+def extract_country(text: str) -> str:
+    patterns = [
+        r"\bPRODUCT\s+OF\s+THE\s+UNITED\s+STATES\b",
+        r"\bPRODUCT\s+OF\s+UNITED\s+STATES\b",
+        r"\bMADE\s+IN\s+THE\s+UNITED\s+STATES\b",
+        r"\bMADE\s+IN\s+UNITED\s+STATES\b",
+    ]
+
+    for pattern in patterns:
+        if re.search(
+            pattern,
+            text,
+            flags=re.IGNORECASE,
+        ):
+            return "UNITED STATES"
+
+    return ""
+
+
+def extract_warning(text: str) -> str:
+    match = re.search(
+        r"(GOVERNMENT\s+WARNING\s*:?.*)",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
     )
 
     if not match:
@@ -30,94 +97,7 @@ def _find_match(
     return match.group(1).strip()
 
 
-def extract_abv(text: str) -> str:
-    """
-    Extract alcohol-by-volume information.
-
-    Handles common forms such as:
-        45%
-        45 % Alc./Vol.
-        45% ALC/VOL
-        Alcohol 45% by volume
-    """
-
-    patterns = [
-        r"(\d+(?:\.\d+)?)\s*%\s*(?:ALC\.?\s*/?\s*VOL\.?|ALCOHOL\s+BY\s+VOLUME)?",
-        r"ALCOHOL\s*[:\-]?\s*(\d+(?:\.\d+)?)\s*%",
-    ]
-
-    for pattern in patterns:
-        value = _find_match(pattern, text)
-
-        if value:
-            return value
-
-    return ""
-
-
-def extract_net_contents(text: str) -> str:
-    """
-    Extract common metric net-content expressions.
-    """
-
-    patterns = [
-        r"(\d+(?:\.\d+)?)\s*(ML|M[Ll]|L|LITERS?|LITRES?)\b",
-    ]
-
-    for pattern in patterns:
-        match = re.search(
-            pattern,
-            text,
-            re.IGNORECASE,
-        )
-
-        if match:
-            number = match.group(1)
-            unit = match.group(2).lower()
-
-            if unit.startswith("l"):
-                return f"{number} L"
-
-            return f"{number} mL"
-
-    return ""
-
-
-def extract_warning(text: str) -> str:
-    """
-    Locate the federal government warning text.
-
-    The prototype intentionally separates:
-      1. textual presence
-      2. exact wording
-      3. visual typography
-
-    OCR can provide evidence for the first two but cannot
-    reliably establish every typography requirement.
-    """
-
-    upper = text.upper()
-
-    start = upper.find(
-        WARNING_PHRASE
-    )
-
-    if start == -1:
-        return ""
-
-    warning = text[start:].strip()
-
-    return warning
-
-
 def extract_brand_name(text: str) -> str:
-    """
-    Use simple heuristics to identify a likely brand name.
-
-    The final comparison against the application record is
-    intentionally handled by the decision engine.
-    """
-
     lines = [
         line.strip()
         for line in text.splitlines()
@@ -125,233 +105,93 @@ def extract_brand_name(text: str) -> str:
     ]
 
     if not lines:
-        # OCR may return a single line.
-        words = text.split()
+        return ""
 
-        return " ".join(words[:5])
-
-    # Prefer a prominent early line that is not obviously
-    # regulatory or numeric information.
-    for line in lines[:8]:
+    for line in lines:
         upper = line.upper()
 
-        if "GOVERNMENT WARNING" in upper:
+        if upper.startswith("PRODUCT OF"):
+            continue
+
+        if upper.startswith("MADE IN"):
+            continue
+
+        if upper.startswith("GOVERNMENT WARNING"):
+            continue
+
+        if "%" in line:
             continue
 
         if re.search(
-            r"\d+\s*%",
-            line,
+            r"\b(WHISKEY|WHISKY|BOURBON|VODKA|GIN|RUM|TEQUILA|BRANDY)\b",
+            upper,
         ):
             continue
 
-        if len(line) >= 3:
-            return line
-
-    return lines[0]
-
-
-def extract_class_type(
-    text: str,
-) -> str:
-    """
-    Identify common distilled-spirit class/type terms.
-    """
-
-    candidates = [
-        "Kentucky Straight Bourbon Whiskey",
-        "Straight Bourbon Whiskey",
-        "Bourbon Whiskey",
-        "Tennessee Whiskey",
-        "Straight Whiskey",
-        "Blended Whiskey",
-        "American Whiskey",
-        "Whiskey",
-        "Whisky",
-        "Vodka",
-        "Gin",
-        "Rum",
-        "Tequila",
-        "Brandy",
-        "Cognac",
-    ]
-
-    upper = text.upper()
-
-    for candidate in candidates:
-        if candidate.upper() in upper:
-            return candidate
+        return line
 
     return ""
 
 
-def extract_name_address(
-    text: str,
-) -> str:
-    """
-    Extract a likely producer/bottler line.
-
-    This is deliberately conservative because OCR alone
-    should not invent a business identity.
-    """
-
+def extract_name_address(text: str) -> str:
     lines = [
         line.strip()
         for line in text.splitlines()
         if line.strip()
     ]
 
-    address_terms = [
-        "DISTILLERY",
-        "DISTILLER",
-        "BREWING",
-        "BREWER",
-        "VINEYARDS",
-        "WINERY",
-        "COMPANY",
-        "CO.",
-        "LLC",
-        "INC.",
-        "ROAD",
-        "RD.",
-        "STREET",
-        "ST.",
-        "AVENUE",
-        "AVE.",
-    ]
-
     for line in lines:
         upper = line.upper()
 
         if any(
-            term in upper
-            for term in address_terms
+            marker in upper
+            for marker in (
+                "DISTILLERY",
+                "DISTILLER",
+                "BREWERY",
+                "VINEYARD",
+                "WINERY",
+            )
         ):
             return line
 
     return ""
 
 
-def extract_country(
-    text: str,
-) -> str:
-    """
-    Identify an explicitly printed country of origin.
-    """
-
-    patterns = [
-        r"PRODUCT\s+OF\s+([A-Za-z][A-Za-z\s]+)",
-        r"MADE\s+IN\s+([A-Za-z][A-Za-z\s]+)",
-        r"PRODUCT\s+OF\s+THE\s+([A-Za-z][A-Za-z\s]+)",
-    ]
-
-    for pattern in patterns:
-        value = _find_match(
-            pattern,
-            text,
-        )
-
-        if value:
-            return value.strip(" .,")
-
-    return ""
-
-
 def extract_fields(
     text: str,
-    ocr_confidence: float,
-) -> List[ExtractedField]:
-    """
-    Extract all supported label fields.
+    ocr_confidence: float = 1.0,
+) -> list[ExtractedField]:
 
-    Confidence is intentionally derived conservatively from
-    the underlying OCR confidence. Individual extracted fields
-    can later be adjusted by the decision engine.
-    """
-
-    abv = extract_abv(text)
-    net_contents = extract_net_contents(text)
-    warning = extract_warning(text)
-    brand = extract_brand_name(text)
-    class_type = extract_class_type(text)
-    name_address = extract_name_address(text)
-    country = extract_country(text)
-
-    fields: List[ExtractedField] = []
-
-    fields.append(
-        ExtractedField(
-            field="brand_name",
-            value=brand or None,
-            confidence=ocr_confidence,
-            evidence=brand,
-        )
+    confidence = max(
+        0.0,
+        min(
+            1.0,
+            float(ocr_confidence),
+        ),
     )
 
-    fields.append(
-        ExtractedField(
-            field="class_type",
-            value=class_type or None,
-            confidence=ocr_confidence,
-            evidence=class_type,
-        )
-    )
-
-    fields.append(
-        ExtractedField(
-            field="abv",
-            value=abv or None,
-            confidence=ocr_confidence,
-            evidence=abv,
-        )
-    )
-
-    fields.append(
-        ExtractedField(
-            field="net_contents",
-            value=net_contents or None,
-            confidence=ocr_confidence,
-            evidence=net_contents,
-        )
-    )
-
-    fields.append(
-        ExtractedField(
-            field="name_address",
-            value=name_address or None,
-            confidence=ocr_confidence,
-            evidence=name_address,
-        )
-    )
-
-    fields.append(
-        ExtractedField(
-            field="country_of_origin",
-            value=country or None,
-            confidence=ocr_confidence,
-            evidence=country,
-        )
-    )
-
-    fields.append(
-        ExtractedField(
-            field="government_warning",
-            value=warning or None,
-            confidence=ocr_confidence,
-            evidence=warning,
-        )
-    )
-
-    return fields
-
-
-def extraction_summary(
-    fields: List[ExtractedField],
-) -> Dict[str, str]:
-    """
-    Convert extracted fields into a simple dictionary.
-    """
-
-    return {
-        field.field: field.value or ""
-        for field in fields
+    values = {
+        "brand_name": extract_brand_name(text),
+        "class_type": extract_class_type(text),
+        "abv": extract_abv(text),
+        "net_contents": extract_net_contents(text),
+        "name_address": extract_name_address(text),
+        "country_of_origin": extract_country(text),
+        "government_warning": extract_warning(text),
     }
+
+    extracted = []
+
+    for field_name, value in values.items():
+        if value:
+            extracted.append(
+                ExtractedField(
+                    field=field_name,
+                    value=value,
+                    confidence=confidence,
+                    evidence=value,
+                )
+            )
+
+    return extracted
