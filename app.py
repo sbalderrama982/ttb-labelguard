@@ -1,59 +1,56 @@
 import json
 import time
-from concurrent.futures import ThreadPoolExecutor
+from typing import Dict, List
 
 import streamlit as st
 
 from labelguard.decision_engine import verify_label
+from labelguard.evidence import exportable_record
 from labelguard.models import ApplicationRecord
 
 
 st.set_page_config(
-    page_title="LabelGuard | TTB",
+    page_title="LabelGuard",
     page_icon="🛡️",
     layout="wide",
 )
 
+
+# ---------------------------------------------------------------------
+# Styling
+# ---------------------------------------------------------------------
 
 st.markdown(
     """
     <style>
         .main-title {
             font-size: 2.4rem;
-            font-weight: 800;
-            margin-bottom: 0;
+            font-weight: 700;
+            margin-bottom: 0.15rem;
         }
 
         .subtitle {
-            color: #667085;
-            font-size: 1rem;
-            margin-bottom: 2rem;
+            color: #5f6368;
+            font-size: 1.05rem;
+            margin-bottom: 1.5rem;
         }
 
-        .decision-pass {
-            background: #e8f7ee;
-            border-left: 6px solid #16834a;
+        .status-box {
             padding: 1rem;
-            border-radius: 8px;
-        }
-
-        .decision-mismatch {
-            background: #fff0ef;
-            border-left: 6px solid #c62828;
-            padding: 1rem;
-            border-radius: 8px;
-        }
-
-        .decision-review {
-            background: #fff8e1;
-            border-left: 6px solid #d28b00;
-            padding: 1rem;
-            border-radius: 8px;
+            border-radius: 0.5rem;
+            border: 1px solid #d0d7de;
+            margin-bottom: 1rem;
         }
 
         .small-muted {
-            color: #667085;
-            font-size: .85rem;
+            color: #6b7280;
+            font-size: 0.85rem;
+        }
+
+        div[data-testid="stMetric"] {
+            border: 1px solid #d0d7de;
+            padding: 0.75rem;
+            border-radius: 0.5rem;
         }
     </style>
     """,
@@ -61,304 +58,538 @@ st.markdown(
 )
 
 
-def application_form():
-    st.subheader("Application Record")
+# ---------------------------------------------------------------------
+# Header
+# ---------------------------------------------------------------------
 
-    col1, col2 = st.columns(2)
+st.markdown(
+    '<div class="main-title">🛡️ LabelGuard</div>',
+    unsafe_allow_html=True,
+)
 
-    with col1:
-        application_id = st.text_input(
-            "Application ID",
-            value="TTB-DEMO-1042",
-        )
+st.markdown(
+    """
+    <div class="subtitle">
+        AI-assisted alcohol label verification prototype
+        for compliance review workflows
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
-        brand_name = st.text_input(
-            "Brand Name",
-            value="Stone's Throw",
-        )
 
-        class_type = st.text_input(
-            "Class / Type",
-            value="Kentucky Straight Bourbon Whiskey",
-        )
+# ---------------------------------------------------------------------
+# Sidebar
+# ---------------------------------------------------------------------
 
-        name_address = st.text_input(
-            "Bottler / Producer",
-            value="Stone's Throw Distillery, Frankfort, KY",
-        )
+with st.sidebar:
 
-    with col2:
-        abv = st.number_input(
-            "Alcohol by Volume (%)",
-            min_value=0.0,
-            max_value=100.0,
-            value=45.0,
-            step=0.1,
-        )
+    st.header("Application Record")
 
-        net_contents_ml = st.number_input(
-            "Net Contents (mL)",
-            min_value=0.0,
-            value=750.0,
-            step=1.0,
-        )
-
-        country_of_origin = st.text_input(
-            "Country of Origin",
-            value="United States",
-        )
-
-    return ApplicationRecord(
-        application_id=application_id,
-        beverage_type="distilled_spirits",
-        brand_name=brand_name,
-        class_type=class_type,
-        abv=abv,
-        net_contents_ml=net_contents_ml,
-        name_address=name_address,
-        country_of_origin=country_of_origin,
+    application_id = st.text_input(
+        "Application ID",
+        value="TTB-DEMO-001",
     )
 
-
-def render_result(result):
-    decision = result["decision"]
-
-    if decision == "PASS":
-        css_class = "decision-pass"
-        icon = "🟢"
-    elif decision == "MISMATCH":
-        css_class = "decision-mismatch"
-        icon = "🔴"
-    else:
-        css_class = "decision-review"
-        icon = "🟡"
-
-    st.markdown(
-        f"""
-        <div class="{css_class}">
-            <h3>{icon} {decision.replace("_", " ")}</h3>
-            <div class="small-muted">
-                {result["filename"]} ·
-                {result["processing_ms"]} ms ·
-                OCR confidence: {result["ocr_confidence"]:.0%}
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    beverage_type = st.selectbox(
+        "Beverage Type",
+        [
+            "Distilled Spirits",
+        ],
     )
 
-    st.write("")
-
-    rows = []
-
-    for field in result["fields"]:
-        rows.append(
-            {
-                "Field": field["field"],
-                "Application": field.get("application") or "—",
-                "Observed": field.get("observed") or "—",
-                "Decision": field["decision"],
-                "Confidence": f'{field["confidence"]:.0%}',
-                "Reason": field["reason"],
-            }
-        )
-
-    st.dataframe(
-        rows,
-        use_container_width=True,
-        hide_index=True,
+    brand_name = st.text_input(
+        "Brand Name",
+        value="STONE'S THROW",
     )
 
-    if result["review_flags"]:
-        with st.expander("Human-review checks"):
-            for flag in result["review_flags"]:
-                st.write(f"• {flag}")
-
-    with st.expander("Evidence / OCR text"):
-        st.code(result["extracted_text"] or "[No OCR text detected]")
-
-        st.json(result["trace"])
-
-
-def main():
-    st.markdown(
-        '<div class="main-title">🛡️ LabelGuard</div>',
-        unsafe_allow_html=True,
+    class_type = st.text_input(
+        "Class / Type",
+        value="Kentucky Straight Bourbon Whiskey",
     )
 
-    st.markdown(
-        """
-        <div class="subtitle">
-            AI-assisted alcohol label verification for TTB compliance workflows.
-            Evidence first. Human judgment when evidence is uncertain.
-        </div>
-        """,
-        unsafe_allow_html=True,
+    abv = st.number_input(
+        "Alcohol by Volume (%)",
+        min_value=0.0,
+        max_value=100.0,
+        value=45.0,
+        step=0.1,
     )
 
-    with st.sidebar:
-        st.header("About LabelGuard")
+    net_contents_ml = st.number_input(
+        "Net Contents (mL)",
+        min_value=1.0,
+        max_value=100000.0,
+        value=750.0,
+        step=1.0,
+    )
 
-        st.write(
-            """
-            LabelGuard is a prototype designed to reduce repetitive
-            label-to-application matching while keeping compliance
-            agents in the decision loop.
-            """
-        )
+    name_address = st.text_input(
+        "Bottler / Producer",
+        value="Stone's Throw Distillery",
+    )
 
-        st.divider()
-
-        st.caption("Prototype architecture")
-        st.write(
-            """
-            1. Image preparation  
-            2. OCR / vision  
-            3. Evidence extraction  
-            4. Normalization  
-            5. Rule evaluation  
-            6. Human-review gate
-            """
-        )
-
-        st.divider()
-
-        st.caption(
-            "This prototype does not replace an authorized TTB compliance determination."
-        )
-
-    application = application_form()
+    country_of_origin = st.text_input(
+        "Country of Origin",
+        value="United States",
+    )
 
     st.divider()
 
-    st.subheader("Label Images")
-
-    uploaded_files = st.file_uploader(
-        "Upload one or more alcohol label images",
-        type=["png", "jpg", "jpeg", "webp"],
-        accept_multiple_files=True,
-        help="Batch uploads are supported for importer submissions.",
+    st.caption(
+        "Prototype only — no production TTB/COLA "
+        "systems are connected."
     )
 
-    if uploaded_files:
-        st.info(
-            f"{len(uploaded_files)} label(s) selected."
+
+application = ApplicationRecord(
+    application_id=application_id,
+    beverage_type=beverage_type.lower().replace(
+        " ",
+        "_",
+    ),
+    brand_name=brand_name,
+    class_type=class_type,
+    abv=abv,
+    net_contents_ml=net_contents_ml,
+    name_address=name_address,
+    country_of_origin=country_of_origin,
+)
+
+
+# ---------------------------------------------------------------------
+# Main upload area
+# ---------------------------------------------------------------------
+
+st.header("1. Upload Label Images")
+
+st.write(
+    "Upload one label or a batch of labels. "
+    "Each image is evaluated independently."
+)
+
+uploaded_files = st.file_uploader(
+    "Choose label image files",
+    type=[
+        "png",
+        "jpg",
+        "jpeg",
+        "webp",
+    ],
+    accept_multiple_files=True,
+)
+
+if not uploaded_files:
+    st.info(
+        "Start by uploading one or more label images."
+    )
+
+    st.header("How it works")
+
+    col1, col2, col3, col4 = st.columns(4)
+
+    with col1:
+        st.markdown("### 1️⃣ Upload")
+        st.write(
+            "Submit a label image or a batch."
         )
 
-        with st.expander("Selected files"):
-            for file in uploaded_files:
-                st.write(
-                    f"• {file.name} — "
-                    f"{file.size / 1024:.1f} KB"
-                )
+    with col2:
+        st.markdown("### 2️⃣ Read")
+        st.write(
+            "Local OCR extracts visible text."
+        )
 
-    verify_button = st.button(
-        "🔎 Run Label Verification",
+    with col3:
+        st.markdown("### 3️⃣ Compare")
+        st.write(
+            "Extracted values are compared with the application."
+        )
+
+    with col4:
+        st.markdown("### 4️⃣ Review")
+        st.write(
+            "Uncertain or conflicting results are escalated."
+        )
+
+    st.stop()
+
+
+# ---------------------------------------------------------------------
+# Batch controls
+# ---------------------------------------------------------------------
+
+st.header("2. Review Queue")
+
+left, right = st.columns(
+    [3, 1]
+)
+
+with left:
+    st.write(
+        f"**{len(uploaded_files)}** label(s) ready for verification."
+    )
+
+with right:
+    run_verification = st.button(
+        "Run Verification",
         type="primary",
         use_container_width=True,
-        disabled=not uploaded_files,
     )
 
-    if verify_button:
-        results = []
 
-        progress = st.progress(0)
+if run_verification:
 
-        start_time = time.perf_counter()
+    results: List[Dict[str, object]] = []
 
-        with ThreadPoolExecutor(max_workers=4) as executor:
-            futures = []
+    progress = st.progress(
+        0,
+        text="Preparing verification...",
+    )
 
-            for file in uploaded_files:
-                futures.append(
-                    executor.submit(
-                        verify_label,
-                        file.getvalue(),
-                        file.name,
-                        application,
-                    )
+    start_batch = time.perf_counter()
+
+    for index, uploaded_file in enumerate(
+        uploaded_files
+    ):
+
+        progress.progress(
+            index / len(uploaded_files),
+            text=(
+                f"Verifying {uploaded_file.name}..."
+            ),
+        )
+
+        image_bytes = uploaded_file.getvalue()
+
+        result = verify_label(
+            image_bytes=image_bytes,
+            filename=uploaded_file.name,
+            application=application,
+        )
+
+        evidence = exportable_record(
+            application_id=application_id,
+            filename=uploaded_file.name,
+            result=result,
+        )
+
+        results.append(
+            {
+                "result": result,
+                "evidence": evidence,
+            }
+        )
+
+    progress.progress(
+        1.0,
+        text="Verification complete.",
+    )
+
+    batch_ms = int(
+        (time.perf_counter() - start_batch)
+        * 1000
+    )
+
+    st.session_state[
+        "verification_results"
+    ] = results
+
+    st.session_state[
+        "batch_ms"
+    ] = batch_ms
+
+
+# ---------------------------------------------------------------------
+# Results
+# ---------------------------------------------------------------------
+
+if (
+    "verification_results"
+    not in st.session_state
+):
+    st.info(
+        "Click **Run Verification** to process the uploaded labels."
+    )
+
+    st.stop()
+
+
+results = st.session_state[
+    "verification_results"
+]
+
+batch_ms = st.session_state.get(
+    "batch_ms",
+    0,
+)
+
+
+st.header("3. Verification Results")
+
+
+pass_count = sum(
+    item["result"]["decision"] == "PASS"
+    for item in results
+)
+
+mismatch_count = sum(
+    item["result"]["decision"] == "MISMATCH"
+    for item in results
+)
+
+review_count = sum(
+    item["result"]["decision"] == "NEEDS_REVIEW"
+    for item in results
+)
+
+
+metric1, metric2, metric3, metric4 = st.columns(4)
+
+with metric1:
+    st.metric(
+        "Labels",
+        len(results),
+    )
+
+with metric2:
+    st.metric(
+        "Pass",
+        pass_count,
+    )
+
+with metric3:
+    st.metric(
+        "Mismatch",
+        mismatch_count,
+    )
+
+with metric4:
+    st.metric(
+        "Human Review",
+        review_count,
+    )
+
+
+st.caption(
+    f"Batch processing time: {batch_ms:,} ms"
+)
+
+
+# ---------------------------------------------------------------------
+# Individual result cards
+# ---------------------------------------------------------------------
+
+for index, item in enumerate(
+    results,
+    start=1,
+):
+
+    result = item["result"]
+    evidence = item["evidence"]
+
+    filename = result.get(
+        "filename",
+        f"Label {index}",
+    )
+
+    decision = result.get(
+        "decision",
+        "NEEDS_REVIEW",
+    )
+
+    processing_ms = result.get(
+        "processing_ms",
+        0,
+    )
+
+    ocr_confidence = result.get(
+        "ocr_confidence",
+        0.0,
+    )
+
+    if decision == "PASS":
+        status = "🟢 PASS"
+
+    elif decision == "MISMATCH":
+        status = "🔴 MISMATCH"
+
+    else:
+        status = "🟡 NEEDS REVIEW"
+
+    with st.expander(
+        f"{status} — {filename}",
+        expanded=(index == 1),
+    ):
+
+        top1, top2, top3 = st.columns(3)
+
+        with top1:
+            st.metric(
+                "Decision",
+                decision,
+            )
+
+        with top2:
+            st.metric(
+                "OCR Confidence",
+                f"{ocr_confidence:.0%}",
+            )
+
+        with top3:
+            st.metric(
+                "Processing",
+                f"{processing_ms} ms",
+            )
+
+        st.subheader(
+            "Field-Level Verification"
+        )
+
+        field_rows = []
+
+        for field in result.get(
+            "fields",
+            [],
+        ):
+
+            field_rows.append(
+                {
+                    "Field": field.get(
+                        "field"
+                    ),
+                    "Application": field.get(
+                        "application"
+                    ),
+                    "Observed": field.get(
+                        "observed"
+                    ),
+                    "Decision": field.get(
+                        "decision"
+                    ),
+                    "Confidence": (
+                        f"{float(field.get('confidence', 0)):.0%}"
+                    ),
+                }
+            )
+
+        if field_rows:
+            st.dataframe(
+                field_rows,
+                use_container_width=True,
+                hide_index=True,
+            )
+
+        st.subheader(
+            "Why?"
+        )
+
+        for message in evidence.get(
+            "summary",
+            [],
+        ):
+            st.write(
+                f"• {message}"
+            )
+
+        review_flags = result.get(
+            "review_flags",
+            [],
+        )
+
+        if review_flags:
+            st.warning(
+                "Human-review flags detected."
+            )
+
+            for flag in review_flags:
+                st.write(
+                    f"⚠️ {flag}"
                 )
 
-            for index, future in enumerate(futures, start=1):
-                try:
-                    results.append(future.result())
-                except Exception as exc:
-                    results.append(
-                        {
-                            "filename": uploaded_files[index - 1].name,
-                            "decision": "NEEDS_REVIEW",
-                            "processing_ms": 0,
-                            "ocr_confidence": 0,
-                            "fields": [],
-                            "review_flags": [
-                                f"Processing error: {exc}"
-                            ],
-                            "extracted_text": "",
-                            "trace": [],
-                        }
-                    )
+        with st.expander(
+            "OCR Evidence"
+        ):
 
-                progress.progress(
-                    index / len(futures)
+            st.text(
+                result.get(
+                    "extracted_text",
+                    "",
                 )
+            )
 
-        elapsed = time.perf_counter() - start_time
+        with st.expander(
+            "Machine-Readable Decision Trace"
+        ):
 
-        st.session_state["results"] = results
-        st.session_state["batch_elapsed"] = elapsed
-
-    if "results" in st.session_state:
-        results = st.session_state["results"]
-
-        st.divider()
-        st.header("Verification Results")
-
-        pass_count = sum(
-            r["decision"] == "PASS"
-            for r in results
-        )
-
-        mismatch_count = sum(
-            r["decision"] == "MISMATCH"
-            for r in results
-        )
-
-        review_count = sum(
-            r["decision"] == "NEEDS_REVIEW"
-            for r in results
-        )
-
-        processing_times = [
-            r["processing_ms"]
-            for r in results
-            if r["processing_ms"] > 0
-        ]
-
-        average_ms = (
-            sum(processing_times) / len(processing_times)
-            if processing_times
-            else 0
-        )
-
-        c1, c2, c3, c4 = st.columns(4)
-
-        c1.metric("PASS", pass_count)
-        c2.metric("MISMATCH", mismatch_count)
-        c3.metric("NEEDS REVIEW", review_count)
-        c4.metric(
-            "Avg. Processing",
-            f"{average_ms:.0f} ms",
-        )
-
-        st.caption(
-            f"Batch wall-clock time: "
-            f"{st.session_state.get('batch_elapsed', 0):.2f} seconds"
-        )
-
-        for result in results:
-            st.write("")
-            render_result(result)
+            st.json(
+                evidence
+            )
 
 
-if __name__ == "__main__":
-    main()
+# ---------------------------------------------------------------------
+# Export
+# ---------------------------------------------------------------------
+
+st.header("4. Export Results")
+
+export_payload = {
+    "application": {
+        "application_id": application.application_id,
+        "beverage_type": application.beverage_type,
+        "brand_name": application.brand_name,
+        "class_type": application.class_type,
+        "abv": application.abv,
+        "net_contents_ml": application.net_contents_ml,
+        "name_address": application.name_address,
+        "country_of_origin": application.country_of_origin,
+    },
+    "batch_processing_ms": batch_ms,
+    "results": [
+        item["evidence"]
+        for item in results
+    ],
+}
+
+json_payload = json.dumps(
+    export_payload,
+    indent=2,
+    default=str,
+)
+
+st.download_button(
+    "Download Verification Evidence (JSON)",
+    data=json_payload,
+    file_name="labelguard_verification.json",
+    mime="application/json",
+    use_container_width=True,
+)
+
+
+# ---------------------------------------------------------------------
+# Prototype limitations
+# ---------------------------------------------------------------------
+
+st.divider()
+
+with st.expander(
+    "Prototype Scope & Limitations"
+):
+
+    st.markdown(
+        """
+        **This prototype is decision support, not an automated
+        legal determination.**
+
+        - OCR results can contain errors.
+        - Textual presence does not prove visual typography.
+        - Government-warning formatting requires human verification.
+        - The prototype does not connect to COLA.
+        - No production records are stored.
+        - The current rules focus on distilled-spirit examples.
+        - Low-confidence results are intentionally escalated.
+        - Production deployment would require appropriate federal
+          security, privacy, retention, accessibility, and
+          authorization controls.
+        """
+    )
